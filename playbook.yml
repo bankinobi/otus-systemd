@@ -1,0 +1,76 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - name: Install packages
+      package:
+        name: "{{ item }}"
+        state: installed
+      with_items:
+        - epel-release
+        - spawn-fcgi
+        - php
+        - php-cli
+        - mod_fcgid
+        - httpd
+    - name: Uncomment rows in /etc/sysconfig/spawn-fcgi
+      replace:
+        path: /etc/sysconfig/spawn-fcgi
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      with_items:
+        - { regexp: "#SOCKET=", replace: "SOCKET=" }
+        - { regexp: "#OPTIONS=", replace: "OPTIONS=" }
+    - name: Rename httpd unit file
+      command: mv /usr/lib/systemd/system/httpd.service /usr/lib/systemd/system/httpd@.service
+    - name: Edit httpd unit file
+      replace:
+        path: /usr/lib/systemd/system/httpd@.service
+        regexp: "/etc/sysconfig/httpd"
+        replace: "/etc/sysconfig/httpd-%I"
+    - name: Template httpd sysconfig files
+      template:
+        src: templates/httpd.j2
+        dest: "/etc/sysconfig/httpd-{{ item }}"
+      with_items:
+        - first
+        - second
+    - name: Delete original httpd sysconfig file
+      file:
+        path: /etc/sysconfig/httpd
+        state: absent
+    - name: Template httpd config files
+      template:
+        src: templates/httpd.conf.j2
+        dest: "/etc/httpd/conf/{{ item.name }}.conf"
+      with_items:
+        - { name: "first", listen: "8008" }
+        - { name: "second", listen: "8009" }
+    - name: Copy HW files
+      copy:
+        src: "files/{{ item.name }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode | default(omit) }}"
+      loop:
+        - { name: watchlog.sysconfig, dest: /etc/sysconfig/watchlog }
+        - { name: watchlog.service, dest: /etc/systemd/system/watchlog.service }
+        - { name: watchlog.timer, dest: /etc/systemd/system/watchlog.timer }
+        - { name: watchlog.sh, dest: /opt/watchlog.sh, mode: "0755" }
+        - {
+            name: spawn-fcgi.service,
+            dest: /etc/systemd/system/spawn-fcgi.service,
+          }
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+    - name: Start and enable all HW units
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      with_items:
+        - watchlog.timer
+        - watchlog.service
+        - spawn-fcgi.service
+        - httpd@first
+        - httpd@second
